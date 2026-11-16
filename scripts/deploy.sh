@@ -26,10 +26,19 @@ compose() {
 
 load_env
 
-if [[ ! -f "${NGINX_SSL_DIR:-${ROOT_DIR}/nginx/ssl}/fullchain.pem" ]]; then
-  echo "Thieu chung chi TLS: ${NGINX_SSL_DIR:-${ROOT_DIR}/nginx/ssl}/fullchain.pem" >&2
-  echo "Xem README.md (muc tao cert dev)." >&2
-  exit 1
+EDGE_CONF="${NGINX_EDGE_CONF:-nginx/qms.conf}"
+case "${EDGE_CONF}" in
+  */*) ;;
+  *) EDGE_CONF="${ROOT_DIR}/${EDGE_CONF}" ;;
+esac
+
+if [[ "${EDGE_CONF}" != *http* ]]; then
+  ssl_dir="${NGINX_SSL_DIR:-${ROOT_DIR}/nginx/ssl}"
+  if [[ ! -f "${ssl_dir}/fullchain.pem" ]]; then
+    echo "Thieu chung chi TLS: ${ssl_dir}/fullchain.pem" >&2
+    echo "Xem README.md (muc tao cert dev) hoac dung qms.http.conf + host TLS." >&2
+    exit 1
+  fi
 fi
 
 echo "==> Keo image co so (postgres, redis, nginx)"

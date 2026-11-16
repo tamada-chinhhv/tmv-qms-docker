@@ -65,15 +65,9 @@ services:
       REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command:
       [
-        "redis-server",
-        "--appendonly",
-        "yes",
-        "--maxmemory",
-        "128mb",
-        "--maxmemory-policy",
-        "volatile-lru",
-        "--requirepass",
-        "${REDIS_PASSWORD:?REDIS_PASSWORD is required}",
+        "sh",
+        "-c",
+        "set -eu; umask 077; printf 'requirepass %s\\nappendonly yes\\nmaxmemory 128mb\\nmaxmemory-policy volatile-lru\\n' \"$$REDIS_PASSWORD\" > /tmp/redis-server.conf; exec redis-server /tmp/redis-server.conf",
       ]
     volumes:
       - qms_redis_data:/data
@@ -173,6 +167,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /app/.next/cache
     user: "1001:1001"
     environment:
       NODE_ENV: production
@@ -224,7 +219,7 @@ services:
         hard: 65535
     volumes:
       - ./nginx/nginx-main.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/qms.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${NGINX_EDGE_CONF:-./nginx/qms.conf}:/etc/nginx/conf.d/default.conf:ro
       - ${NGINX_SSL_DIR:-./nginx/ssl}:/etc/nginx/ssl:ro
     depends_on:
       qms-fe:
@@ -235,7 +230,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "wget -qO- --no-check-certificate https://127.0.0.1/api/health/live || exit 1",
+          "wget -qO- http://127.0.0.1/nginx-health || wget -qO- --no-check-certificate https://127.0.0.1/nginx-health || exit 1",
         ]
       interval: 15s
       timeout: 5s

@@ -1,0 +1,12 @@
+# Host terminates TLS (see nginx/ssl.example.conf). Docker nginx is HTTP-only on localhost.
+# Usage:
+#   NGINX_EDGE_CONF=./nginx/qms.http.conf
+#   TRUST_PROXY_HOPS=2
+#   docker compose -f docker-compose.yml -f docker-compose.host-tls.override.yml up -d
+
+services:
+  nginx:
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:80"
+    volumes:
+      - ${NGINX_EDGE_CONF:-./nginx/qms.http.conf}:/etc/nginx/conf.d/default.conf:ro

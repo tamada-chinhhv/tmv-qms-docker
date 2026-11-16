@@ -40,6 +40,8 @@ flowchart LR
 | `docker-compose.yml` | Stack production (image build sẵn) |
 | `docker-compose.dev.yml` | Postgres, Redis, Mailpit local |
 | `docker-compose.build.yml` | Overlay build image (tùy chọn) |
+| `docker-compose.host-tls.override.yml` | Nginx HTTP-only trên `127.0.0.1:8080` (TLS trên host) |
+| `nginx/qms.http.conf` | Cấu hình edge HTTP-only (đi với override trên) |
 | `Dockerfile.backend` / `Dockerfile.frontend` | Multi-stage `node:22-alpine`, non-root |
 | `nginx/qms.conf` | Proxy, timeout 3 tầng (mục 10.2), WS NAT-safe (5.3), log `rt`/`urt`/`uct` |
 | `postgres/init/` | Role `qms_migrator` / `qms_app`, `pg_trgm`, timeout role `qms_app` (10.7) |
@@ -129,9 +131,13 @@ Trỏ `tmv-qms-be` vào các URL trên; SMTP dùng Mailpit.
 
 ## Nginx và Postgres (theo plan hiệu suất)
 
-**Timeout Nginx** (`nginx/qms.conf`, bảng 10.2): `/api/auth/` **4s**, `/api/` **25s**, upload (`/api/files/`) **110s** (`client_body_timeout 60s`), export **115s**, `/socket.io/` **75s**. Upstream `keepalive 32`, `keepalive_timeout 60s`, `Connection ""` cho HTTP thường.
+**Timeout Nginx** (`nginx/qms.conf`, bảng 10.2): `/api/auth/` **4s**, `/api/` **25s**, `GET /api/files/` **60s**, upload `POST` (attachments/photos/documents) **110s** (`client_body_timeout 60s`, ≥ deadline BE 100s), export **115s**, `/socket.io/` **75s**. Upstream `keepalive 32`, `keepalive_timeout 60s`, `Connection ""` cho HTTP thường.
 
-**Rate limit IP (NAT)**: API **200r/s** burst **400**; socket handshake **20r/s** burst **300**; `limit_conn` **400**/IP (API) và **1000**/IP (WS). Zone **auth** (2r/s) chỉ gắn `location =` **login** và **change-password**; `session`/`refresh`/`me` dùng zone **api** (4.9, H14). Hạ **50r/s** API nếu không NAT (10.11).
+**Rate limit IP (NAT)**: API **200r/s** burst **400**; upload **5r/s** burst **15** (chỉ `POST` lên `/api/attachments` và `/api/(incidents|ncrs)/…/(photos|documents)`); socket handshake **20r/s** burst **300**; `limit_conn` **400**/IP (API) và **1000**/IP (WS). **`GET /api/files/`** và download dùng zone **api**, không dùng upload (quyết định sản phẩm). Zone **auth** (2r/s) chỉ **login** / **change-password**; `session`/`refresh`/`me` dùng zone **api** (4.9, H14).
+
+**Health**: `/api/health/*` chỉ từ **127.0.0.1** tại Nginx; Internet nhận **403**. Healthcheck container `nginx` gọi **`/nginx-health`** cục bộ, không lộ BE ra ngoài.
+
+**Topology TLS trên host** (Let’s Encrypt trên VPS): đặt `NGINX_EDGE_CONF=./nginx/qms.http.conf`, `TRUST_PROXY_HOPS=2`, chạy `docker compose -f docker-compose.yml -f docker-compose.host-tls.override.yml up -d`, cài mẫu `nginx/ssl.example.conf` proxy tới `127.0.0.1:8080`. Không cần cert trong container `nginx`.
 
 **Log truy cập**: `rt`, `urt`, `uct`, `rid` (`$request_id` của Nginx, gửi sang upstream qua header `X-Request-Id` để khớp `requestId` của BE). Mount `nginx/nginx-main.conf` cho `worker_connections 4096`.
 
@@ -141,36 +147,53 @@ Trỏ `tmv-qms-be` vào các URL trên; SMTP dùng Mailpit.
 
 **Container BE**: `ulimits.nofile 65535`, `stop_grace_period 30s` (deploy êm, 5.11).
 
+**Container FE**: `read_only` + `tmpfs` cho `/tmp` và `/app/.next/cache` (Next standalone).
+
+**Storage `qms_storage`**: volume mặc định có thể **exec** file upload — rủi ro chấp nhận Phase 0; BE **không thực thi** file lưu, phục vụ với `nosniff` + `Content-Disposition`, tên file ngẫu nhiên, ảnh re-encode (khi BE Phase 1). Linux: có thể bind mount thư mục host với `noexec` thay volume (tùy chọn, cấu hình host **UNKNOWN**).
+
+**Biến compose chưa dùng hết ở BE Phase 0**: `STORAGE_DIR` (Phase 1 file/attachment), `SMTP_*` (Phase 3 email). Giữ trong `.env` để deploy sau không phải đổi tên.
+
 **Cron backup**: tránh **02:15**, **03:40**, **06:30** (job app, 10.10).
 
 ## Sao lưu / khôi phục (Windows)
 
 ```powershell
 .\scripts\backup.ps1
-.\scripts\restore.ps1 -BackupBundle .\backups\qms_backup_YYYYMMDDTHHMMSSZ.tar
+.\scripts\restore.ps1 -BackupBundle .\backups\qms_backup_YYYYMMDDTHHMMSSZ.tar -Force
 ```
 
-Tham số tùy chọn: `-BackupDir`, `-RetentionDays`. Đặt `AGE_RECIPIENT` hoặc `GPG_RECIPIENT` trong `.env` để mã hóa (nếu đã cài `age`/`gpg`).
+Giữ lại **14** bản theo ngày + **8** bản **Chủ nhật** theo tuần (`BACKUP_RETENTION_DAYS` / `BACKUP_RETENTION_WEEKS`). Tham số: `-BackupDir`, `-RetentionDays`, `-RetentionWeeks`.
+
+Mã hóa: `AGE_RECIPIENT` hoặc `GPG_RECIPIENT` trong `.env` (cần `age`/`gpg` trên host).
+
+Sao lưu offsite: tùy chọn — đặt `BACKUP_OFFSITE_DIR` trong `.env` để script copy thêm một bản (đích sync/rsync do vận hành cấu hình, mặc định **tắt**).
+
+Restore yêu cầu xác nhận: gõ `yes`, hoặc `-Force` (ps1) / `--yes` (sh).
 
 ## Kiểm tra cấu hình
 
 ```powershell
 Copy-Item .env.example .env.verify
 docker compose -f docker-compose.yml --env-file .env.verify config | Out-Null
+docker compose -f docker-compose.yml -f docker-compose.host-tls.override.yml --env-file .env.verify config | Out-Null
 docker compose -f docker-compose.dev.yml --env-file .env.verify config | Out-Null
 Remove-Item .env.verify
 ```
 
-**Kiểm tra `nginx -t`** (cần Docker Desktop đang chạy):
+`DATABASE_URL` trong `.env` **nên bọc ngoặc kép** khi có `connection_limit` / `pool_timeout` (`&` trong PowerShell/bash khi `source`).
+
+**Kiểm tra `nginx -t`** (cần Docker Desktop đang chạy) — chạy cho **cả hai** edge config:
 
 ```powershell
-docker run --rm `
-  -v "${PWD}/nginx/nginx-main.conf:/etc/nginx/nginx.conf:ro" `
-  -v "${PWD}/nginx/qms.conf:/etc/nginx/conf.d/default.conf:ro" `
-  -v "${PWD}/nginx/ssl:/etc/nginx/ssl:ro" `
-  --add-host qms-fe:127.0.0.1 `
-  --add-host qms-be:127.0.0.1 `
-  nginx:1.27-alpine nginx -t
+foreach ($conf in @('qms.conf', 'qms.http.conf')) {
+  docker run --rm `
+    -v "${PWD}/nginx/nginx-main.conf:/etc/nginx/nginx.conf:ro" `
+    -v "${PWD}/nginx/${conf}:/etc/nginx/conf.d/default.conf:ro" `
+    -v "${PWD}/nginx/ssl:/etc/nginx/ssl:ro" `
+    --add-host qms-fe:127.0.0.1 `
+    --add-host qms-be:127.0.0.1 `
+    nginx:1.27-alpine nginx -t
+}
 ```
 
 ## Xử lý sự cố (Windows)
@@ -202,7 +225,7 @@ Trên VPS: dùng script `scripts/*.sh`, `chmod +x` **không bắt buộc** cho `
 ./scripts/build-images.sh    # tren may build
 ./scripts/deploy.sh
 ./scripts/backup.sh
-./scripts/restore.sh backups/qms_backup_....tar
+./scripts/restore.sh --yes backups/qms_backup_....tar
 ```
 
 Tuning host: `ulimit -n` ≥ 65535, `worker_connections` 4096, `net.core.somaxconn` ≥ 4096.

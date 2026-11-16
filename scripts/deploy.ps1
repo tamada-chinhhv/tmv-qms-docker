@@ -15,14 +15,17 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
 
 Import-QmsDotEnv -EnvFile $EnvFile
 
-$sslDir = if ($env:NGINX_SSL_DIR) { $env:NGINX_SSL_DIR } else { Join-Path $RootDir 'nginx\ssl' }
-if (-not [System.IO.Path]::IsPathRooted($sslDir)) {
-    $sslDir = Join-Path $RootDir ($sslDir -replace '/', '\')
-}
-$certPath = Join-Path $sslDir 'fullchain.pem'
-if (-not (Test-Path -LiteralPath $certPath)) {
-    Write-Error "Thieu chung chi TLS: $certPath. Xem README.md (muc tao cert dev)."
-    exit 1
+$edgeConf = if ($env:NGINX_EDGE_CONF) { $env:NGINX_EDGE_CONF } else { Join-Path $RootDir 'nginx\qms.conf' }
+if (-not $edgeConf.ToLowerInvariant().Contains('http')) {
+    $sslDir = if ($env:NGINX_SSL_DIR) { $env:NGINX_SSL_DIR } else { Join-Path $RootDir 'nginx\ssl' }
+    if (-not [System.IO.Path]::IsPathRooted($sslDir)) {
+        $sslDir = Join-Path $RootDir ($sslDir -replace '/', '\')
+    }
+    $certPath = Join-Path $sslDir 'fullchain.pem'
+    if (-not (Test-Path -LiteralPath $certPath)) {
+        Write-Error "Thieu chung chi TLS: $certPath. Xem README.md (muc tao cert dev) hoac dung qms.http.conf + host TLS."
+        exit 1
+    }
 }
 
 Write-Host '==> Keo image co so (postgres, redis, nginx)'

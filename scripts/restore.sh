@@ -4,12 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${COMPOSE_ENV_FILE:-${ROOT_DIR}/.env}"
 
-if [[ $# -lt 1 ]]; then
-  echo "Cach dung: $0 <backup-bundle.tar[.age|.gpg]>" >&2
+CONFIRMED=false
+ARGS=()
+for arg in "$@"; do
+  case "${arg}" in
+    --yes) CONFIRMED=true ;;
+    *) ARGS+=("${arg}") ;;
+  esac
+done
+
+if [[ ${#ARGS[@]} -lt 1 ]]; then
+  echo "Cach dung: $0 [--yes] <backup-bundle.tar[.age|.gpg]>" >&2
   exit 1
 fi
 
-INPUT="$1"
+INPUT="${ARGS[0]}"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
@@ -44,6 +53,15 @@ STORAGE_TAR="$(find "${WORKDIR}" -name 'qms_storage_*.tar' | head -n 1)"
 if [[ -z "${DB_DUMP}" || -z "${STORAGE_TAR}" ]]; then
   echo "Bundle khong hop le: can qms_db_*.dump va qms_storage_*.tar" >&2
   exit 1
+fi
+
+if [[ "${CONFIRMED}" != true ]]; then
+  echo "Restore se ghi de DB va storage. Go 'yes' de tiep tuc."
+  read -r -p "> " confirm
+  if [[ "${confirm}" != "yes" ]]; then
+    echo "Da huy."
+    exit 1
+  fi
 fi
 
 echo "==> Dung tang ung dung"

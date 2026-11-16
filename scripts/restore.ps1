@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string] $BackupBundle
+    [string] $BackupBundle,
+    [switch] $Force
 )
 
 Set-StrictMode -Version Latest
@@ -54,6 +55,15 @@ try {
     $storageTar = Get-ChildItem -LiteralPath $workDir -Filter 'qms_storage_*.tar' -File | Select-Object -First 1
     if (-not $dbDump -or -not $storageTar) {
         throw 'Bundle khong hop le: can qms_db_*.dump va qms_storage_*.tar'
+    }
+
+    if (-not $Force) {
+        Write-Host "Restore se ghi de DB va storage. Go 'yes' de tiep tuc."
+        $confirm = Read-Host
+        if ($confirm -ne 'yes') {
+            Write-Host 'Da huy.'
+            exit 1
+        }
     }
 
     $pgUser = if ($env:POSTGRES_SUPERUSER) { $env:POSTGRES_SUPERUSER } else { 'postgres' }

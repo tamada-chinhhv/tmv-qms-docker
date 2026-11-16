@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [string] $BackupDir,
-    [int] $RetentionDays = 0
+    [int] $RetentionDays = 0,
+    [int] $RetentionWeeks = 0
 )
 
 Set-StrictMode -Version Latest
@@ -34,6 +35,14 @@ if ($RetentionDays -lt 1) {
         $RetentionDays = [int]$env:BACKUP_RETENTION_DAYS
     } else {
         $RetentionDays = 14
+    }
+}
+
+if ($RetentionWeeks -lt 1) {
+    if ($env:BACKUP_RETENTION_WEEKS) {
+        $RetentionWeeks = [int]$env:BACKUP_RETENTION_WEEKS
+    } else {
+        $RetentionWeeks = 8
     }
 }
 
@@ -82,15 +91,38 @@ if ($env:AGE_RECIPIENT -and (Get-Command age -ErrorAction SilentlyContinue)) {
     Write-Host 'Dat AGE_RECIPIENT hoac GPG_RECIPIENT trong .env de ma hoa.'
 }
 
-$cutoff = (Get-Date).AddDays(-$RetentionDays)
+if ($env:BACKUP_OFFSITE_DIR) {
+    $offsite = $env:BACKUP_OFFSITE_DIR
+    New-Item -ItemType Directory -Force -Path $offsite | Out-Null
+    Copy-Item -LiteralPath $encrypted -Destination (Join-Path $offsite (Split-Path -Leaf $encrypted)) -Force
+    Write-Host "==> Da sao chep offsite (tuy chon): $offsite"
+}
+
+$nowUtc = [DateTime]::UtcNow
+$dailyCutoff = $nowUtc.AddDays(-$RetentionDays)
+$weeklyCutoff = $nowUtc.AddDays(-($RetentionWeeks * 7))
+
 Get-ChildItem -LiteralPath $BackupDir -File |
     Where-Object {
         $_.Name -like 'qms_backup_*.tar' -or
         $_.Name -like 'qms_backup_*.tar.age' -or
         $_.Name -like 'qms_backup_*.tar.gpg'
     } |
-    Where-Object { $_.LastWriteTime -lt $cutoff } |
     ForEach-Object {
+        $m = [regex]::Match($_.Name, '^qms_backup_(\d{8})T')
+        if (-not $m.Success) {
+            return
+        }
+        $ymd = $m.Groups[1].Value
+        $fileDate = [datetime]::ParseExact($ymd, 'yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture)
+        $fileUtc = [DateTime]::SpecifyKind($fileDate, [DateTimeKind]::Utc)
+        if ($fileUtc -gt $dailyCutoff) {
+            return
+        }
+        $isSunday = ($fileUtc.DayOfWeek -eq [DayOfWeek]::Sunday)
+        if ($isSunday -and $fileUtc -gt $weeklyCutoff) {
+            return
+        }
         Write-Host "Xoa ban cu: $($_.FullName)"
         Remove-Item -LiteralPath $_.FullName -Force
     }

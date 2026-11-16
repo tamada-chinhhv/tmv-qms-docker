@@ -14,6 +14,9 @@ Docker Compose, Nginx edge config, Postgres init roles, backup/deploy scripts. *
 - Redis: `volatile-lru`, `128mb`, `requirepass`, `appendonly` — not HRM `allkeys-lru`.
 - Socket proxy: `proxy_read_timeout 75s`, `limit_conn` 1000/IP + handshake 20r/s burst 300 (NAT); not HRM 86400s.
 - Nginx `limit_req` zone `auth` (2r/s) only on `location =` `/api/auth/login` and `/api/auth/change-password`; `/api/auth/session`, refresh, me use `api` zone (plan 4.9, H14).
+- Upload zone `qms_upload` (5r/s, burst 15) applies **only** to `POST` on `/api/attachments` and `^/api/(incidents|ncrs)/…/(photos|documents)` via `map` keys; `GET /api/files/` and other reads use `api` zone only (product-approved).
+- `/api/health/*` is **127.0.0.1 only** at nginx; container healthcheck uses local `GET /nginx-health` (not proxied BE).
+- Host-TLS topology: `nginx/qms.http.conf` + `docker-compose.host-tls.override.yml`, `TRUST_PROXY_HOPS=2`, `NGINX_EDGE_CONF=./nginx/qms.http.conf`.
 - **Windows dev**: prefer `scripts/*.ps1`; LF via `.gitattributes` for `*.sh` / compose / nginx. **Do not rely on git executable bit** for container entrypoints — `Dockerfile.backend` runs `chmod 755` on the entrypoint.
 - **Postgres init** (`postgres/init/*.sh`): works without `+x` (official image sources non-executable `.sh`).
 
@@ -25,7 +28,7 @@ Docker Compose, Nginx edge config, Postgres init roles, backup/deploy scripts. *
 | FE | 3000 | Next `standalone` → `node server.js` |
 | Socket.IO | — | Path `/socket.io`, namespace `/realtime`, websocket-only |
 
-Env names: `PUBLIC_ORIGIN`, `MIGRATE_DATABASE_URL`, `STORAGE_DIR=/data/storage`, `JWT_SECRETS`, `COOKIE_SECURE`.
+Env names: `PUBLIC_ORIGIN`, `MIGRATE_DATABASE_URL`, `STORAGE_DIR=/data/storage` (BE consumes from Phase 1+), `SMTP_*` (Phase 3 email), `JWT_SECRETS`, `COOKIE_SECURE`.
 
 Nginx timeouts/rates follow plan §10.2, §5.3, §10.11 (`nginx/qms.conf`). Postgres role timeouts §10.7 in `postgres/init/01-qms-init.sh`; server params via compose `command`.
 
