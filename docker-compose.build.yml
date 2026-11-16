@@ -1,0 +1,19 @@
+# Optional overlay: build images on a workstation (needs Docker BuildKit).
+# docker compose -f docker-compose.yml -f docker-compose.build.yml build
+
+services:
+  qms-be:
+    build:
+      context: ../tmv-qms-be
+      dockerfile: ../tmv-qms-docker/Dockerfile.backend
+      additional_contexts:
+        qms-docker: .
+    image: tmv-qms-be:latest
+    pull_policy: build
+
+  qms-fe:
+    build:
+      context: ../tmv-qms
+      dockerfile: ../tmv-qms-docker/Dockerfile.frontend
+    image: tmv-qms-fe:latest
+    pull_policy: build

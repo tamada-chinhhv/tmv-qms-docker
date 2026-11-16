@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+# Build from repo root: docker build -f Dockerfile.backend -t tmv-qms-be:latest ..
+
+FROM node:22-alpine AS deps
+RUN apk add --no-cache python3 make g++
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+
+ARG DATABASE_URL=postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder?schema=public
+ENV DATABASE_URL=${DATABASE_URL}
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+RUN npx prisma generate && npm run build
+
+FROM node:22-alpine AS prod-deps
+RUN apk add --no-cache python3 make g++
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --omit=dev \
+  && npx prisma generate \
+  && npm cache clean --force
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 qms \
+  && adduser --system --uid 1001 --ingroup qms qms \
+  && mkdir -p /data/storage \
+  && chown -R qms:qms /data/storage /app
+
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY scripts/ensure-system-admin.mjs ./scripts/ensure-system-admin.mjs
+
+# chmod in image (do not rely on git +x on Windows workstations)
+COPY --from=qms-docker scripts/docker-entrypoint-backend.sh /app/docker-entrypoint.sh
+RUN chmod 755 /app/docker-entrypoint.sh
+
+USER qms
+
+EXPOSE 3001
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
